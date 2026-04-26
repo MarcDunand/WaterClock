@@ -41,20 +41,20 @@ const int dirPinY  = D2;
 const int servoPin = D5;
 
 // -------------------------- Mechanical calibration ---------------------------
-float pulleyDiamX = 18.7f;
-float pulleyDiamY = 12.22f;
+float pulleyDiamX = 0.8;
+float pulleyDiamY = 0.8;
 
-const int xMicrosteps = 16;
-const int yMicrosteps = 16;
+const int xMicrosteps = 1;
+const int yMicrosteps = 1;
 const int stepsPerRev = 200;
 
 const float xMmToSteps = (xMicrosteps * stepsPerRev) / (pulleyDiamX * PI);
 const float yMmToSteps = (yMicrosteps * stepsPerRev) / (pulleyDiamY * PI);
 
 // ----------------------------- Motion tuning ---------------------------------
-const float BASE_MAX_SPEED   = 1000.0f;
-const float BASE_ACCEL       = 1000.0f;
-const float HOMING_SPEED     = -600.0f;
+const float BASE_MAX_SPEED   = 3000.0f;
+const float BASE_ACCEL       = 3000.0f;
+const float HOMING_SPEED     = -1000.0f;
 const int   SERVO_MOVE_DELAY = 5;      // ms per degree during pen transition
 
 // ------------------------------ Servo tuning ---------------------------------
@@ -64,7 +64,7 @@ const int SERVO_UP   = 180;
 
 // ------------------------------ Clock layout ---------------------------------
 const float CLOCK_RADIUS_MM      = 70.0f;  // 10 cm radius per your request
-const float CLOCK_CENTER_X_MM    = 80.0f;  // CHANGE to where you want the clock center
+const float CLOCK_CENTER_X_MM    = 120.0f;  // CHANGE to where you want the clock center
 const float CLOCK_CENTER_Y_MM    = 80.0f;  // CHANGE to where you want the clock center
 const float TICK_INNER_RADIUS_MM = 20.0f;
 const float HOUR_HAND_LENGTH_MM  = 50.0f;
@@ -127,14 +127,16 @@ float degToRad(float deg) {
 }
 
 float polarToX(float radius, float angleDegClock) {
-  // 12 o'clock = 0 deg, 3 o'clock = 90 deg, clockwise positive
-  float theta = degToRad(90.0f - angleDegClock);
+  // Clock face rotated 90° counterclockwise:
+  // 12 o'clock points left
+  float theta = degToRad(180.0f - angleDegClock);
   return CLOCK_CENTER_X_MM + radius * cos(theta);
 }
 
 float polarToY(float radius, float angleDegClock) {
-  float theta = degToRad(90.0f - angleDegClock);
+  float theta = degToRad(180.0f - angleDegClock);
   float dy = radius * sin(theta);
+
   return Y_MM_INCREASES_UPWARD ? (CLOCK_CENTER_Y_MM + dy)
                                : (CLOCK_CENTER_Y_MM - dy);
 }
@@ -234,24 +236,31 @@ void applyCoordinatedMove(float targetXmm, float targetYmm) {
   moveInProgress = true;
 }
 
-void moveServoSmoothly(int targetPos) {
-  int current = penIsDown ? SERVO_DOWN : SERVO_UP;
-  if (current == targetPos) return;
+int lastServoPos = SERVO_UP;   // global variable
 
-  int step = (targetPos > current) ? 1 : -1;
-  for (int pos = current; pos != targetPos; pos += step) {
-    servo.write(pos);
-    delay(SERVO_MOVE_DELAY);
-  }
+void moveServoSmoothly(int targetPos) {
+  int degreesToMove = abs(targetPos - lastServoPos);
+
   servo.write(targetPos);
+
+  // tune this number:
+  int msPerDegree = 20;
+
+  delay(degreesToMove * msPerDegree);
+
+  lastServoPos = targetPos;
 }
 
 void penUpNow() {
+  if (!penIsDown) return;
+  Serial.println("PEN UP");
   moveServoSmoothly(SERVO_UP);
   penIsDown = false;
 }
 
 void penDownNow() {
+  if (penIsDown) return;
+  Serial.println("PEN DOWN");
   moveServoSmoothly(SERVO_DOWN);
   penIsDown = true;
 }
@@ -413,10 +422,9 @@ bool addHand(float angleDegClock, float lengthMm) {
   float x = polarToX(lengthMm, angleDegClock);
   float y = polarToY(lengthMm, angleDegClock);
 
-  if (!travelTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
   if (!lineTo(x, y)) return false;
-  if (!finishPath()) return false;
-  if (!travelTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
+  if (!lineTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
+
   return true;
 }
 
@@ -427,19 +435,21 @@ bool generateClockCommands(int hour24, int minute) {
   if (!travelTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
 
   if (!addClockCircle()) return false;
-  if (!addHourTicks()) return false;
+  //if (!addHourTicks()) return false; temporarily removed to increase speed of plotting cycle
 
   float minuteAngle = minute * 6.0f;
   float hourAngle = ((hour24 % 12) * 30.0f) + (minute * 0.5f);
 
+  if (!travelTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
+  if (!ensurePenDownPlanned()) return false;
+
   if (!addHand(hourAngle, HOUR_HAND_LENGTH_MM)) return false;
   if (!addHand(minuteAngle, MIN_HAND_LENGTH_MM)) return false;
 
-  if (!travelTo(CLOCK_CENTER_X_MM, CLOCK_CENTER_Y_MM)) return false;
-  if (!finishPath()) return false;
+  if (!ensurePenUpPlanned()) return false;
 
-  return true;
-}
+    return true;
+  }
 
 // ----------------------------- Execution -------------------------------------
 void processHoming() {
@@ -549,7 +559,12 @@ void setup() {
 
   servo.setPeriodHertz(50);
   servo.attach(servoPin, 1000, 2000);
+
+  Serial.println("Lifting pen before homing...");
   servo.write(SERVO_UP);
+  delay(700);
+  lastServoPos = SERVO_UP;
+
   penIsDown = false;
   plannerPenDown = false;
 
