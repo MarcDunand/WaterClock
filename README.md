@@ -6,6 +6,8 @@ An XY pen plotter uses a water brush to draw onto reusable calligraphy practice 
 
 Unlike a conventional clock that preserves time through permanent marks or digital displays, Water Clock measures time through cycles of evaporation and repetition.
 
+Find full project documentation here: https://averypaperclip.github.io/week10.html
+
 ---
 
 ## Concept
